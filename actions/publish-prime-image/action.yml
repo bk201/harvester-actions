@@ -49,6 +49,10 @@ inputs:
     description: 'Publish a signed SLSA provenance attestation; disable only for test builds outside the release pipeline'
     required: false
     default: 'true'
+  allow-docker-hub:
+    description: 'Allow docker.io as the destination registry; enable only for test builds outside the release pipeline'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -57,23 +61,27 @@ runs:
       id: config
       shell: bash
       env:
+        ALLOW_DOCKER_HUB: ${{ inputs.allow-docker-hub }}
         ATTEST: ${{ inputs.attest }}
         CACHE_SCOPE: ${{ inputs.cache-scope }}
         IMAGE: ${{ inputs.image }}
         REGISTRY: ${{ inputs.registry }}
         SIGN: ${{ inputs.sign }}
       run: |
-        if [[ "$REGISTRY" == docker.io ]]; then
-          echo "The prime or staging registry cannot be docker.io" >&2
-          exit 1
-        fi
-
-        for value in "$SIGN" "$ATTEST"; do
+        for value in "$SIGN" "$ATTEST" "$ALLOW_DOCKER_HUB"; do
           if [[ "$value" != true && "$value" != false ]]; then
-            echo "The sign and attest inputs must be 'true' or 'false'" >&2
+            echo "The sign, attest, and allow-docker-hub inputs must be 'true' or 'false'" >&2
             exit 1
           fi
         done
+
+        if [[ "$REGISTRY" == docker.io ]]; then
+          if [[ "$ALLOW_DOCKER_HUB" != true ]]; then
+            echo "The prime or staging registry cannot be docker.io" >&2
+            exit 1
+          fi
+          echo "::warning::Publishing ${IMAGE} to docker.io because allow-docker-hub is true"
+        fi
         if [[ "$SIGN" != true || "$ATTEST" != true ]]; then
           echo "::warning::Publishing ${IMAGE} with sign=${SIGN} and attest=${ATTEST}"
         fi
