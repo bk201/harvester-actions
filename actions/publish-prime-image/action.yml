@@ -1,5 +1,5 @@
 name: 'Publish Prime Image'
-description: 'Build, publish, and sign one prime or staging image with provenance and SBOM attestations'
+description: 'Build, publish, and sign one prime or staging image with provenance and SBOM attestations; signing and SLSA attestation can be disabled for test builds'
 
 inputs:
   context:
@@ -41,6 +41,14 @@ inputs:
     description: 'Generate an SBOM attestation; disable for images whose SBOM exceeds the BuildKit 40MiB attestation size limit'
     required: false
     default: 'true'
+  sign:
+    description: 'Sign the image digest with keyless Cosign; disable only for test builds outside the release pipeline'
+    required: false
+    default: 'true'
+  attest:
+    description: 'Publish a signed SLSA provenance attestation; disable only for test builds outside the release pipeline'
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -49,13 +57,25 @@ runs:
       id: config
       shell: bash
       env:
+        ATTEST: ${{ inputs.attest }}
         CACHE_SCOPE: ${{ inputs.cache-scope }}
         IMAGE: ${{ inputs.image }}
         REGISTRY: ${{ inputs.registry }}
+        SIGN: ${{ inputs.sign }}
       run: |
         if [[ "$REGISTRY" == docker.io ]]; then
           echo "The prime or staging registry cannot be docker.io" >&2
           exit 1
+        fi
+
+        for value in "$SIGN" "$ATTEST"; do
+          if [[ "$value" != true && "$value" != false ]]; then
+            echo "The sign and attest inputs must be 'true' or 'false'" >&2
+            exit 1
+          fi
+        done
+        if [[ "$SIGN" != true || "$ATTEST" != true ]]; then
+          echo "::warning::Publishing ${IMAGE} with sign=${SIGN} and attest=${ATTEST}"
         fi
 
         cache_scope="${CACHE_SCOPE:-$IMAGE}"
@@ -64,6 +84,7 @@ runs:
 
     # temporary workaround until we add harvester mappings in rancher/slsactl
     - name: Install slsactl
+      if: inputs.attest == 'true'
       uses: rancherlabs/slsactl/actions/install-slsactl@22b4f4bf17657fc9275fb914c4179257f20c898a
       with:
         version: v0.1.40
@@ -84,6 +105,7 @@ runs:
         cache-to: type=gha,mode=max,scope=${{ steps.config.outputs.cache-scope }}
 
     - name: Sign prime image
+      if: inputs.sign == 'true'
       shell: bash
       env:
         DIGEST: ${{ steps.push.outputs.digest }}
@@ -108,6 +130,7 @@ runs:
           "$image_ref"
 
     - name: Attest provenance
+      if: inputs.attest == 'true'
       shell: bash
       env:
         DIGEST: ${{ steps.push.outputs.digest }}
