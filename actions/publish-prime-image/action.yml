@@ -53,6 +53,14 @@ inputs:
     description: 'Allow docker.io as the destination registry; enable only for test builds outside the release pipeline'
     required: false
     default: 'false'
+  slsactl-url:
+    description: 'URL of a .tar.gz archive containing a custom slsactl build to install instead of the upstream release; requires slsactl-sha256; use only for test builds outside the release pipeline'
+    required: false
+    default: ''
+  slsactl-sha256:
+    description: 'SHA-256 checksum of the file at slsactl-url; required when slsactl-url is set'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -96,12 +104,19 @@ runs:
       if: inputs.sign == 'true' && inputs.attest != 'true'
       uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-    # temporary workaround until we add harvester mappings in rancher/slsactl
     - name: Install slsactl
-      if: inputs.attest == 'true'
+      if: inputs.attest == 'true' && inputs.slsactl-url == '' && inputs.slsactl-sha256 == ''
       uses: rancherlabs/slsactl/actions/install-slsactl@22b4f4bf17657fc9275fb914c4179257f20c898a
       with:
         version: v0.1.40
+
+    # The action fails unless both slsactl-url and slsactl-sha256 are set.
+    - name: Install custom slsactl build
+      if: inputs.attest == 'true' && (inputs.slsactl-url != '' || inputs.slsactl-sha256 != '')
+      uses: $/actions/install-slsactl
+      with:
+        url: ${{ inputs.slsactl-url }}
+        sha256: ${{ inputs.slsactl-sha256 }}
 
     - name: Build and push prime image
       id: push
