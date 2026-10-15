@@ -1,0 +1,126 @@
+# Resolve the target registries for a build and publish one image to each
+# of them. This covers the common component pipeline; workflows with a
+# different release policy can still compose the individual actions.
+#
+# Reference usage:
+#    steps:
+#      ...
+#      - uses: harvester/harvester-actions/actions/build-and-publish@<sha> # main
+#        with:
+#          release-tag-name: ${{ inputs.release-tag-name }}
+#          image: ${{ matrix.image }}
+#          dockerfile: ${{ matrix.dockerfile }}
+
+name: 'Build and Publish Image'
+description: 'Resolve target registries from the release tag, then build and push one image to Docker Hub, staging, and/or prime'
+
+inputs:
+  release-tag-name:
+    description: 'Tag/name identifying this build (e.g. master-head, pull-123, or the release tag); a "prime-" prefix is stripped for the image tag'
+    required: true
+  is-release:
+    description: 'Whether this build is a release ("true"/"false"); defaults to a published release event'
+    required: false
+    default: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+  context:
+    description: 'Docker build context'
+    required: false
+    default: '.'
+  dockerfile:
+    description: 'Path to the Dockerfile'
+    required: true
+  image:
+    description: 'Image name without registry, repository, or tag'
+    required: true
+  platforms:
+    description: 'Comma-separated target platforms'
+    required: false
+    default: 'linux/amd64,linux/arm64'
+  sbom:
+    description: 'Generate an SBOM attestation for staging and prime images; disable for images whose SBOM exceeds the BuildKit 40MiB attestation size limit'
+    required: false
+    default: 'true'
+
+outputs:
+  tag:
+    value: ${{ steps.tag.outputs.tag }}
+    description: 'Image tag pushed to every resolved registry'
+  use-docker-io:
+    value: ${{ steps.resolve.outputs.use-docker-io }}
+    description: 'Whether the image was published to Docker Hub ("true"/"false")'
+  use-staging:
+    value: ${{ steps.resolve.outputs.use-staging }}
+    description: 'Whether the image was published to the staging registry ("true"/"false")'
+  use-prime:
+    value: ${{ steps.resolve.outputs.use-prime }}
+    description: 'Whether the image was published to the prime registry ("true"/"false")'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve registries
+      id: resolve
+      uses: $/actions/resolve-registries
+      with:
+        release-tag-name: ${{ inputs.release-tag-name }}
+        is-release: ${{ inputs.is-release }}
+
+    - name: Set image tag
+      id: tag
+      shell: bash
+      env:
+        RELEASE_TAG_NAME: ${{ inputs.release-tag-name }}
+      run: echo "tag=${RELEASE_TAG_NAME#prime-}" >> "$GITHUB_OUTPUT"
+
+    - name: Login to Docker Hub
+      id: login-docker
+      if: steps.resolve.outputs.use-docker-io == 'true'
+      uses: $/actions/login-docker-hub
+
+    - name: Publish public image
+      if: steps.resolve.outputs.use-docker-io == 'true'
+      uses: $/actions/publish-public-image
+      with:
+        context: ${{ inputs.context }}
+        dockerfile: ${{ inputs.dockerfile }}
+        image: ${{ inputs.image }}
+        tag: ${{ steps.tag.outputs.tag }}
+        platforms: ${{ inputs.platforms }}
+        registry: ${{ steps.login-docker.outputs.registry }}
+        repository: ${{ steps.login-docker.outputs.repository }}
+
+    - name: Login to Staging Registry
+      id: login-staging
+      if: steps.resolve.outputs.use-staging == 'true'
+      uses: $/actions/login-staging-registry
+
+    - name: Publish staging image
+      if: steps.resolve.outputs.use-staging == 'true'
+      uses: $/actions/publish-prime-image
+      with:
+        context: ${{ inputs.context }}
+        dockerfile: ${{ inputs.dockerfile }}
+        image: ${{ inputs.image }}
+        tag: ${{ steps.tag.outputs.tag }}
+        platforms: ${{ inputs.platforms }}
+        sbom: ${{ inputs.sbom }}
+        registry: ${{ steps.login-staging.outputs.registry }}
+        repository: ${{ steps.login-staging.outputs.repository }}
+
+    - name: Login to Prime Registry
+      id: login-prime
+      if: steps.resolve.outputs.use-prime == 'true'
+      uses: $/actions/login-prime-registry
+
+    - name: Publish prime image
+      if: steps.resolve.outputs.use-prime == 'true'
+      uses: $/actions/publish-prime-image
+      with:
+        context: ${{ inputs.context }}
+        dockerfile: ${{ inputs.dockerfile }}
+        image: ${{ inputs.image }}
+        tag: ${{ steps.tag.outputs.tag }}
+        platforms: ${{ inputs.platforms }}
+        sbom: ${{ inputs.sbom }}
+        registry: ${{ steps.login-prime.outputs.registry }}
+        repository: ${{ steps.login-prime.outputs.repository }}
