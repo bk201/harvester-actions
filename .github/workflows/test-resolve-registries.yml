@@ -1,0 +1,140 @@
+name: Test resolve-registries
+
+on:
+  pull_request:
+    paths:
+      - "actions/resolve-registries/**"
+      - ".github/workflows/test-resolve-registries.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "actions/resolve-registries/**"
+      - ".github/workflows/test-resolve-registries.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve prime-v1.9.1 (release=true)
+        id: prime-final
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: prime-v1.9.1
+          is-release: "true"
+
+      - name: Resolve prime-v1.9.1-rc1 (release=true)
+        id: prime-rc
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: prime-v1.9.1-rc1
+          is-release: "true"
+
+      - name: Resolve prime-v1.9.1-rc.2 (release=true)
+        id: prime-rc-dotted
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: prime-v1.9.1-rc.2
+          is-release: "true"
+
+      - name: Resolve prime-v1.9.1-dev1 (release=true)
+        id: prime-dev
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: prime-v1.9.1-dev1
+          is-release: "true"
+
+      - name: Resolve prime-v1.9 (release=true)
+        id: prime-incomplete
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: prime-v1.9
+          is-release: "true"
+
+      - name: Resolve prime-foo (release=true)
+        id: prime-not-version
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: prime-foo
+          is-release: "true"
+
+      - name: Resolve v1.9.1 (release=true)
+        id: final
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: v1.9.1
+          is-release: "true"
+
+      - name: Resolve v1.9.1-rc1 (release=true)
+        id: rc
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: v1.9.1-rc1
+          is-release: "true"
+
+      - name: Resolve master-head (release=false)
+        id: branch-head
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: master-head
+          is-release: "false"
+
+      - name: Resolve prime-v1.9.1 (release=false)
+        id: prime-not-release
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: prime-v1.9.1
+          is-release: "false"
+
+      # Each value is "<use-docker-io> <use-staging> <use-prime>".
+      - name: Check outputs
+        env:
+          PRIME_FINAL: ${{ steps.prime-final.outputs.use-docker-io }} ${{ steps.prime-final.outputs.use-staging }} ${{ steps.prime-final.outputs.use-prime }}
+          PRIME_RC: ${{ steps.prime-rc.outputs.use-docker-io }} ${{ steps.prime-rc.outputs.use-staging }} ${{ steps.prime-rc.outputs.use-prime }}
+          PRIME_RC_DOTTED: ${{ steps.prime-rc-dotted.outputs.use-docker-io }} ${{ steps.prime-rc-dotted.outputs.use-staging }} ${{ steps.prime-rc-dotted.outputs.use-prime }}
+          PRIME_DEV: ${{ steps.prime-dev.outputs.use-docker-io }} ${{ steps.prime-dev.outputs.use-staging }} ${{ steps.prime-dev.outputs.use-prime }}
+          PRIME_INCOMPLETE: ${{ steps.prime-incomplete.outputs.use-docker-io }} ${{ steps.prime-incomplete.outputs.use-staging }} ${{ steps.prime-incomplete.outputs.use-prime }}
+          PRIME_NOT_VERSION: ${{ steps.prime-not-version.outputs.use-docker-io }} ${{ steps.prime-not-version.outputs.use-staging }} ${{ steps.prime-not-version.outputs.use-prime }}
+          FINAL: ${{ steps.final.outputs.use-docker-io }} ${{ steps.final.outputs.use-staging }} ${{ steps.final.outputs.use-prime }}
+          RC: ${{ steps.rc.outputs.use-docker-io }} ${{ steps.rc.outputs.use-staging }} ${{ steps.rc.outputs.use-prime }}
+          BRANCH_HEAD: ${{ steps.branch-head.outputs.use-docker-io }} ${{ steps.branch-head.outputs.use-staging }} ${{ steps.branch-head.outputs.use-prime }}
+          PRIME_NOT_RELEASE: ${{ steps.prime-not-release.outputs.use-docker-io }} ${{ steps.prime-not-release.outputs.use-staging }} ${{ steps.prime-not-release.outputs.use-prime }}
+        run: |
+          rc=0
+          check() {
+            if [[ "${!1}" == "$2" ]]; then
+              echo "ok: $1"
+            else
+              echo "::error::$1: got '${!1}', want '$2'"
+              rc=1
+            fi
+          }
+          # prime-v1.9.1, release: prime
+          check PRIME_FINAL "false false true"
+          # prime-v1.9.1-rc1, release: staging
+          check PRIME_RC "false true false"
+          # prime-v1.9.1-rc.2, release: staging
+          check PRIME_RC_DOTTED "false true false"
+          # prime-v1.9.1-dev1, release: staging
+          check PRIME_DEV "false true false"
+          # prime-v1.9, release: staging
+          check PRIME_INCOMPLETE "false true false"
+          # prime-foo, release: staging
+          check PRIME_NOT_VERSION "false true false"
+          # v1.9.1, release: docker-io
+          check FINAL "true false false"
+          # v1.9.1-rc1, release: docker-io
+          check RC "true false false"
+          # master-head, not a release: docker-io + staging
+          check BRANCH_HEAD "true true false"
+          # prime-v1.9.1, not a release: docker-io + staging
+          check PRIME_NOT_RELEASE "true true false"
+          exit $rc
