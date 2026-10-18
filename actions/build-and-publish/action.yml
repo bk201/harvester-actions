@@ -22,6 +22,10 @@ inputs:
     description: 'Whether this build is a release ("true"/"false"); defaults to a published release event'
     required: false
     default: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+  registries:
+    description: 'Registry selection: "auto" resolves registries from the release tag; otherwise a comma-separated list of docker-io, staging, and prime to publish to exactly those (e.g. "docker-io,prime")'
+    required: false
+    default: 'auto'
   context:
     description: 'Docker build context'
     required: false
@@ -64,6 +68,7 @@ runs:
       with:
         release-tag-name: ${{ inputs.release-tag-name }}
         is-release: ${{ inputs.is-release }}
+        registries: ${{ inputs.registries }}
 
     - name: Set image tag
       id: tag
