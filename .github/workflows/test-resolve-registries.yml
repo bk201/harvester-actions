@@ -94,6 +94,30 @@ jobs:
           release-tag-name: prime-v1.9.1
           is-release: "false"
 
+      - name: Resolve v1.9-20261008 (release=true, registries=docker-io,staging,prime)
+        id: override-all
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: v1.9-20261008
+          is-release: "true"
+          registries: docker-io,staging,prime
+
+      - name: Resolve prime-v1.9.1 (release=true, registries=" docker-io , prime ")
+        id: override-pair
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: prime-v1.9.1
+          is-release: "true"
+          registries: " docker-io , prime "
+
+      - name: Resolve master-head (release=false, registries=prime)
+        id: override-one
+        uses: ./actions/resolve-registries
+        with:
+          release-tag-name: master-head
+          is-release: "false"
+          registries: prime
+
       # Each value is "<use-docker-io> <use-staging> <use-prime>".
       - name: Check outputs
         env:
@@ -107,6 +131,9 @@ jobs:
           RC: ${{ steps.rc.outputs.use-docker-io }} ${{ steps.rc.outputs.use-staging }} ${{ steps.rc.outputs.use-prime }}
           BRANCH_HEAD: ${{ steps.branch-head.outputs.use-docker-io }} ${{ steps.branch-head.outputs.use-staging }} ${{ steps.branch-head.outputs.use-prime }}
           PRIME_NOT_RELEASE: ${{ steps.prime-not-release.outputs.use-docker-io }} ${{ steps.prime-not-release.outputs.use-staging }} ${{ steps.prime-not-release.outputs.use-prime }}
+          OVERRIDE_ALL: ${{ steps.override-all.outputs.use-docker-io }} ${{ steps.override-all.outputs.use-staging }} ${{ steps.override-all.outputs.use-prime }}
+          OVERRIDE_PAIR: ${{ steps.override-pair.outputs.use-docker-io }} ${{ steps.override-pair.outputs.use-staging }} ${{ steps.override-pair.outputs.use-prime }}
+          OVERRIDE_ONE: ${{ steps.override-one.outputs.use-docker-io }} ${{ steps.override-one.outputs.use-staging }} ${{ steps.override-one.outputs.use-prime }}
         run: |
           rc=0
           check() {
@@ -137,4 +164,10 @@ jobs:
           check BRANCH_HEAD "true true false"
           # prime-v1.9.1, not a release: docker-io + staging
           check PRIME_NOT_RELEASE "true true false"
+          # registries=docker-io,staging,prime: all three
+          check OVERRIDE_ALL "true true true"
+          # registries=" docker-io , prime ": docker-io + prime
+          check OVERRIDE_PAIR "true false true"
+          # registries=prime: prime only
+          check OVERRIDE_ONE "false false true"
           exit $rc

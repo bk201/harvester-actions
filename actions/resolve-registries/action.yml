@@ -9,6 +9,8 @@ description: 'Decide which registries this build should publish to, based on the
 #        - otherwise (pre-release such as vX.Y.Z-rc1 or vX.Y.Z-dev1, or not
 #          version-like): push to staging only
 #    - tag does not start with "prime-": push to docker-io only
+# 3. registries is not "auto": push to exactly the listed registries,
+#    regardless of the rules above.
 
 inputs:
   release-tag-name:
@@ -17,6 +19,10 @@ inputs:
   is-release:
     description: 'Whether this build is triggered by a published release ("true"/"false")'
     required: true
+  registries:
+    description: 'Registry selection: "auto" applies the publish rules; otherwise a comma-separated list of docker-io, staging, and prime to publish to exactly those (e.g. "docker-io,prime")'
+    required: false
+    default: 'auto'
 
 outputs:
   use-docker-io:
@@ -35,6 +41,8 @@ runs:
     - name: Resolve publish rules
       id: rules
       shell: bash
+      env:
+        REGISTRIES: ${{ inputs.registries }}
       run: |
         release_tag_name="${{ inputs.release-tag-name }}"
 
@@ -42,7 +50,26 @@ runs:
         use_staging=false
         use_prime=false
 
-        if [[ "${{ inputs.is-release }}" == "true" ]]; then
+        if [[ "$REGISTRIES" != "auto" ]]; then
+          IFS=',' read -ra registries <<< "$REGISTRIES"
+          for registry in "${registries[@]}"; do
+            registry="${registry//[[:space:]]/}"
+            case "$registry" in
+              docker-io) use_docker_io=true ;;
+              staging) use_staging=true ;;
+              prime) use_prime=true ;;
+              "") ;;
+              *)
+                echo "::error::unknown registry \"$registry\" in registries; want \"auto\" or a comma-separated list of docker-io, staging, prime"
+                exit 1
+                ;;
+            esac
+          done
+          if [[ "$use_docker_io$use_staging$use_prime" == "falsefalsefalse" ]]; then
+            echo "::error::registries lists no registry; want \"auto\" or a comma-separated list of docker-io, staging, prime"
+            exit 1
+          fi
+        elif [[ "${{ inputs.is-release }}" == "true" ]]; then
           if [[ "$release_tag_name" == prime-* ]]; then
             stripped_tag="${release_tag_name#prime-}"
             if [[ "$stripped_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
