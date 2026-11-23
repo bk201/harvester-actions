@@ -1,0 +1,138 @@
+name: Test check-team-membership
+
+on:
+  pull_request:
+    paths:
+      - "actions/check-team-membership/**"
+      - ".github/workflows/test-check-team-membership.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "actions/check-team-membership/**"
+      - ".github/workflows/test-check-team-membership.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      # The default GITHUB_TOKEN cannot read team memberships, so the tests run
+      # against a gh stub that answers like the REST API.
+      - name: Install gh stub
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          cat > "$RUNNER_TEMP/bin/gh" <<'EOF'
+          #!/bin/bash
+          # Called as: gh api orgs/<org>/teams/<team>/memberships/<user> --jq .state
+          case "$2" in
+            orgs/acme/teams/dev/memberships/alice) echo "active" ;;
+            orgs/acme/teams/ent:leads/memberships/bob) echo "active" ;;
+            orgs/acme/teams/qa/memberships/carol) echo "pending" ;;
+            orgs/acme/teams/broken/memberships/*)
+              echo "gh: Server Error (HTTP 500)" >&2
+              exit 1
+              ;;
+            *)
+              echo '{"message":"Not Found","status":"404"}'
+              echo "gh: Not Found (HTTP 404)" >&2
+              exit 1
+              ;;
+          esac
+          EOF
+          chmod +x "$RUNNER_TEMP/bin/gh"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Member of the first team
+        id: member
+        uses: ./actions/check-team-membership
+        with:
+          username: alice
+          organization: acme
+          teams: dev,qa
+          github-token: stub
+
+      - name: Member of a later team, whitespace separated, enterprise slug
+        id: later-team
+        uses: ./actions/check-team-membership
+        with:
+          username: bob
+          organization: acme
+          teams: dev qa ent:leads
+          github-token: stub
+
+      - name: Not a member
+        id: not-member
+        uses: ./actions/check-team-membership
+        with:
+          username: dave
+          organization: acme
+          teams: dev,qa,ent:leads
+          github-token: stub
+
+      - name: Pending invitation
+        id: pending
+        uses: ./actions/check-team-membership
+        with:
+          username: carol
+          organization: acme
+          teams: qa
+          github-token: stub
+
+      - name: App login
+        id: app
+        uses: ./actions/check-team-membership
+        with:
+          username: renovate[bot]
+          organization: acme
+          teams: dev
+          github-token: stub
+
+      - name: API error
+        id: api-error
+        continue-on-error: true
+        uses: ./actions/check-team-membership
+        with:
+          username: alice
+          organization: acme
+          teams: broken,dev
+          github-token: stub
+
+      - name: Check outputs
+        env:
+          MEMBER: ${{ steps.member.outputs.is-member }} ${{ steps.member.outputs.team }}
+          LATER_TEAM: ${{ steps.later-team.outputs.is-member }} ${{ steps.later-team.outputs.team }}
+          NOT_MEMBER: ${{ steps.not-member.outputs.is-member }} ${{ steps.not-member.outputs.team }}
+          PENDING: ${{ steps.pending.outputs.is-member }} ${{ steps.pending.outputs.team }}
+          APP: ${{ steps.app.outputs.is-member }} ${{ steps.app.outputs.team }}
+          API_ERROR: ${{ steps.api-error.outcome }}
+        run: |
+          rc=0
+          check() {
+            if [[ "${!1}" == "$2" ]]; then
+              echo "ok: $1"
+            else
+              echo "::error::$1: got '${!1}', want '$2'"
+              rc=1
+            fi
+          }
+          # alice is an active member of dev
+          check MEMBER "true dev"
+          # bob is only a member of the last team in the list
+          check LATER_TEAM "true ent:leads"
+          # dave is in none of the teams
+          check NOT_MEMBER "false "
+          # carol has not accepted the invitation
+          check PENDING "false "
+          # an app login is never looked up
+          check APP "false "
+          # a server error must not be reported as "not a member"
+          check API_ERROR "failure"
+          exit $rc

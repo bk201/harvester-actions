@@ -1,0 +1,75 @@
+name: 'Check Team Membership'
+description: 'Check whether a user is a member of at least one of the given organization teams'
+
+# Membership rules:
+# 1. Teams are given by slug, for example "dev", or "ent:l3-team-leads" for an
+#    enterprise team.
+# 2. Members of a child team count as members of the parent team.
+# 3. Only an active membership counts; a pending invitation does not.
+# 4. A team that does not exist, or that the token cannot see, counts as "not a
+#    member". Any other API error fails the step.
+#
+# The token must be able to read the team memberships of the organization. The
+# default GITHUB_TOKEN cannot.
+
+inputs:
+  username:
+    description: 'GitHub login to check'
+    required: true
+  teams:
+    description: 'Team slugs, separated by commas or whitespace (e.g. "dev,qa")'
+    required: true
+  organization:
+    description: 'Organization that owns the teams'
+    required: false
+    default: ${{ github.repository_owner }}
+  github-token:
+    description: 'Token that can read the team memberships of the organization'
+    required: true
+
+outputs:
+  is-member:
+    value: ${{ steps.check.outputs.is-member }}
+    description: 'Whether the user is an active member of at least one of the teams ("true"/"false")'
+  team:
+    value: ${{ steps.check.outputs.team }}
+    description: 'Slug of the first team the user is a member of; empty when is-member is "false"'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check team membership
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        USERNAME: ${{ inputs.username }}
+        TEAMS: ${{ inputs.teams }}
+        ORGANIZATION: ${{ inputs.organization }}
+      run: |
+        set -f
+        IS_MEMBER="false"
+        MATCHED_TEAM=""
+        ERR=$(mktemp)
+
+        # An app login such as "renovate[bot]" is never a team member.
+        if [[ "$USERNAME" =~ ^[A-Za-z0-9_-]+$ ]]; then
+          for TEAM in ${TEAMS//,/ }; do
+            if STATE=$(gh api "orgs/$ORGANIZATION/teams/$TEAM/memberships/$USERNAME" --jq '.state' 2> "$ERR"); then
+              if [[ "$STATE" == "active" ]]; then
+                IS_MEMBER="true"
+                MATCHED_TEAM="$TEAM"
+                break
+              fi
+            elif ! grep -q "HTTP 404" "$ERR"; then
+              echo "::error::Cannot read the membership of $USERNAME in $ORGANIZATION/$TEAM: $(cat "$ERR")"
+              exit 1
+            fi
+          done
+        fi
+
+        echo "is-member=$IS_MEMBER team=$MATCHED_TEAM"
+        {
+          echo "is-member=$IS_MEMBER"
+          echo "team=$MATCHED_TEAM"
+        } >> "$GITHUB_OUTPUT"
